@@ -1,0 +1,252 @@
+---
+title: "AN_TP1_CHAC_898093"
+author: "Gustavo A. Chac. G."
+date: "9/24/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# RECLAMOS ENARGAS CABA 2019.
+
+En el siguiente trabajo analizaremos los reclamos recibidos en el 2019, pertenecientes a la Ciudad Autonoma de Buenos Aires.
+
+## PARTE I: EXTRACCION DE DATOS
+
+Los datos utilizados para el presente estudio se obtuvieron de una Base de Datos Publica que se encuentra en el siguiente enlace [link](https://datos.gob.ar/dataset/enargas-reclamos-resueltos-por-enargas).
+
+```{r DATOS, include = FALSE}
+# OBTENGO LOS DATOS
+reclamos2019 <- read.csv("reclamos_enargas_2019.csv", encoding = "UTF-8")
+reclamos2020 <- read.csv("reclamos_enargas_2020.csv", encoding = "UTF-8")
+
+# UNO TODOS LOS DATOS Y FILTRO CABA
+reclamos <- merge(reclamos2019, reclamos2020, all = TRUE)
+
+#CARGO LIBRERIAS PARA PODER TRABAR CON SQL
+
+library(proto)
+library(gsubfn)
+library(RSQLite)
+library(sqldf)
+
+reclamos <- sqldf("SELECT * 
+                  FROM reclamos 
+                  WHERE reclamo_provincia = 'Ciudad Autónoma de Buenos Aires'")
+```
+
+```{r}
+head(reclamos)
+```
+
+\newpage
+
+## PARTE II: ANALISIS DE RECLAMOS 2019
+
+El analisis que realizaremos consistira en evaluar los reclamos que fueron procedentes e improcedentes y luego segun su resolucion segmentar el tipo y origen del reclamo. 
+
+### RECLAMOS 2019
+
+```{r DESARROLLO, include=FALSE}
+# PRIMERO FILTRAMOS LA BASE DE DATOS PARA OBTENER LOS DATOS NOS INTERESAN
+reclamosCABA2019 <- sqldf("SELECT *
+                          FROM reclamos
+                          WHERE reclamo_ano = 2019")
+
+# AHORA VERIFICAMOS CUANTOS RECLAMOS SE HICIERON EN EL 2019 Y SU RESULTADO
+# HACEMOS LA VARIABLE NUMERICA PORQUE ERA TIPO CHARACTER
+reclamosCABA2019$reclamo_cantidad <- as.numeric(reclamosCABA2019$reclamo_cantidad)
+
+reclamostotales2019 <- sqldf("SELECT sum(reclamo_cantidad)
+                      FROM reclamosCABA2019 GROUP BY reclamo_mes_nro")
+reclamosprocedentes2019 <- sqldf("SELECT sum(reclamo_cantidad) FROM reclamosCABA2019 WHERE reclamo_resolucion = 'Procedente' GROUP BY reclamo_mes_nro")
+reclamosimprocedentes2019 <- sqldf("SELECT sum(reclamo_cantidad) FROM reclamosCABA2019 WHERE reclamo_resolucion = 'Improcedente' GROUP BY reclamo_mes_nro")
+reclamospormes2019 <- data.frame(c("ENE","FEB","MAR","ABR","MAY","JUN","JUL","AGO","SEP","OCT","NOV","DIC"), reclamostotales2019, reclamosprocedentes2019, reclamosimprocedentes2019)
+colnames(reclamospormes2019) <- c("mes","reclamos","procedente","improcedente")
+
+# TABLA DE FRECUENCIAS
+
+tf <- matrix(c(t(reclamospormes2019$procedente),100*round(t(reclamospormes2019$procedente)/t(reclamospormes2019$reclamos),2),t(reclamospormes2019$improcedente),100*round(t(reclamospormes2019$improcedente)/t(reclamospormes2019$reclamos),2),t(reclamospormes2019$reclamos)),nrow = 5,ncol=12,byrow=TRUE)
+
+tf <- cbind(tf,c(sum(tf[1,]) , 100*round(sum(tf[1,])/sum(tf[5,]),2) , sum(tf[3,]) , 100*round(sum(tf[3,])/sum(tf[5,]),2) , sum(tf[5,])))
+
+colnames(tf) <- c("ENE","FEB","MAR","ABR","MAY","JUN","JUL","AGO","SEP","OCT","NOV","DIC","TOTALES")
+rownames(tf) <- c("PROCEDENTES","% PROC.","IMPROCEDENTES","% IMPR.","TOTALES")
+tf <- as.data.frame(tf)
+tf
+
+# REALIZAMOS GRAFICO VERIFICANDO EL COMPORTAMIENTO DE LOS RECLAMOS
+library(ggplot2)
+
+# HACEMOS LO SIGUIENTE PARA QUE EL GGPLOT NO ORDENE POR ORDEN ALFABETICO
+reclamospormes2019$mes <- factor(reclamospormes2019$mes , levels = c("ENE","FEB","MAR","ABR","MAY","JUN","JUL","AGO","SEP","OCT","NOV","DIC"))
+
+# VEMOS LOS RECLAMOS
+gr2019.1 <- ggplot(data=reclamospormes2019, aes(reclamospormes2019$mes, reclamospormes2019$reclamos)) +
+  geom_bar(stat ="identity", fill="steelblue") +
+  geom_text(aes(label=reclamospormes2019$reclamos), vjust=-0.3, size=3.5)
+
+# ADAPTAMOS UN DATA FRAME AUXILIAR PARA MEJORAR EL GRAFICO Y VERLO POR TIPO DE RESULTADO 
+df1 <- data.frame(reclamospormes2019$mes,reclamospormes2019$procedente,rep("1 Procedente",12))
+colnames(df1) <- c("mes","reclamos","resolucion")
+df2 <- data.frame(reclamospormes2019$mes,reclamospormes2019$improcedente,rep("2 Improcedente",12))
+colnames(df2) <- c("mes","reclamos","resolucion")
+df3 <- merge(df1,df2,all=T)
+
+# HAGO ESTO PARA AGREGAR NUMERO A CADA BARRA
+labelpos <- c(rep(0,24))
+for(i in 1:24) {
+  if (df3$resolucion[i] == "2 Improcedente") {
+    labelpos[i] = df3$reclamos[i]
+  } else {
+    labelpos[i] = df3$reclamos[i]+df3$reclamos[i-1]
+  }
+}
+
+df3 <- cbind(df3,labelpos)
+
+gr2019.2 <- ggplot(data=df3, aes(x=mes, y=reclamos, fill=resolucion)) +
+  geom_bar(stat ="identity") +
+  geom_text(aes(y=labelpos, label=reclamos), vjust=1.6, 
+            color="white", size=3.5)
+  
+
+gr2019.3 <- ggplot(data=df3, aes(x=mes, y=reclamos, fill = resolucion)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_text(aes(label=reclamos), vjust=1.6, color="white", position = position_dodge(0.9), size = 2.5)
+
+# NOTA HICE TRES GRAFICOS LLAMADOS gr2019.# Y ME QUEDO CON EL 3RO PORQUE CONSIDERO QUE ES EL DE COMPRENSION MAS SENCILLA
+gr2019.3
+
+```
+A continuacion veremos cual fue el comportamiento de los reclamos de acuerdo a su resolucion (procedente/improcedente):
+
+```{r}
+tf
+gr2019.3
+```
+
+\newpage
+
+#### RECLAMOS PROCEDENTES
+
+Ahora realizaremos realizaremos un mapeo o segmentacion de los reclamos segun su tipo y origen para luego analizar el heatmap.
+
+```{r PROCEDENTE, include = FALSE}
+
+
+rp2019 <- sqldf("SELECT *
+                FROM reclamosCABA2019
+                WHERE reclamo_resolucion = 'Procedente'")
+
+matriz <- cbind(sqldf("SELECT sum(reclamo_cantidad) as 'I - Facturacion y Gestion de Deudas'
+      FROM rp2019
+      WHERE reclamo_tipo ='I - Facturacion y Gestion de Deudas'
+      GROUP BY reclamo_origen"),
+sqldf("SELECT sum(reclamo_cantidad) as 'II - Inconvenientes con el suministro de gas'
+      FROM rp2019
+      WHERE reclamo_tipo ='II - Inconvenientes con el suministro de gas'
+      GROUP BY reclamo_origen"),
+sqldf("SELECT sum(reclamo_cantidad) as 'III - Gestion de Prestaciones'
+      FROM rp2019
+      WHERE reclamo_tipo ='III - Gestion de Prestaciones'
+      GROUP BY reclamo_origen"))
+
+heatmap1 <- matrix(c(matriz$`I - Facturacion y Gestion de Deudas`,matriz$`II - Inconvenientes con el suministro de gas`,matriz$`III - Gestion de Prestaciones`), ncol=3,nrow=4)
+
+colnames(heatmap1) <- c('Facturacion','Suministro','Prestaciones')
+rownames(heatmap1) <- c("Postal","Electronico","Personal","Telefonico")
+
+heatmap1 <- t(heatmap1)
+heatmap(heatmap1,Rowv = NA, Colv = NA, revC = TRUE, margins = c(15,5))
+
+library(heatmaply)
+p <- heatmaply(heatmap1, 
+        dendrogram = "none",
+        xlab = "", ylab = "", 
+        #main = "",
+        scale = "column",
+        #margins = c(60,100,40,20),
+        #grid_color = "white",
+        #grid_width = 0.00001,
+        #titleX = FALSE,
+        hide_colorbar = TRUE,
+        #branches_lwd = 0.1,
+        #label_names = c("Country", "Feature:", "Value"),
+        fontsize_row = 5, fontsize_col = 5,
+        labCol = colnames(heatmap1),
+        labRow = rownames(heatmap1),
+        #heatmap_layers = theme(axis.line=element_blank())
+        )
+
+tablamapeo <- round(heatmap1/sum(heatmap1),4)
+tablamapeo <- cbind(tablamapeo,c(sum(tablamapeo[1,]),sum(tablamapeo[2,]),sum(tablamapeo[3,])))
+tablamapeo <- rbind(tablamapeo,c(sum(tablamapeo[,1]), sum(tablamapeo[,2]), sum(tablamapeo[,3]), sum(tablamapeo[,4]), sum(tablamapeo[,5])))
+rownames(tablamapeo) <- c('Facturacion','Suministro','Prestaciones',"Total")
+colnames(tablamapeo) <- c("Postal","Electronico","Personal","Telefonico","Total")
+round(tablamapeo,2)
+```
+```{r}
+tablamapeo
+heatmap(heatmap1,Rowv = NA, Colv = NA, revC = TRUE, margins = c(15,8))
+```
+\newpage
+
+#### RECLAMOS IMPROCEDENTES
+
+Realizaremos el mismo analisis que en el de reclamos procedentes.
+
+```{r include = FALSE}
+ri2019 <- sqldf("SELECT *
+                FROM reclamosCABA2019
+                WHERE reclamo_resolucion = 'Improcedente'")
+
+matrizi <- cbind(sqldf("SELECT sum(reclamo_cantidad) as 'I - Facturacion y Gestion de Deudas'
+      FROM ri2019
+      WHERE reclamo_tipo ='I - Facturacion y Gestion de Deudas'
+      GROUP BY reclamo_origen"),
+rbind(0,sqldf("SELECT sum(reclamo_cantidad) as 'II - Inconvenientes con el suministro de gas'
+      FROM ri2019
+      WHERE reclamo_tipo ='II - Inconvenientes con el suministro de gas'
+      GROUP BY reclamo_origen")),
+sqldf("SELECT sum(reclamo_cantidad) as 'III - Gestion de Prestaciones'
+      FROM ri2019
+      WHERE reclamo_tipo = 'III - Gestion de Prestaciones'
+      GROUP BY reclamo_origen"))
+
+heatmap2 <- matrix(c(matrizi$`I - Facturacion y Gestion de Deudas`,matrizi$`II - Inconvenientes con el suministro de gas`,matrizi$`III - Gestion de Prestaciones`), ncol=3,nrow=4)
+
+colnames(heatmap2) <- c('Facturacion','Suministro','Prestaciones')
+rownames(heatmap2) <- c("Postal","Electronico","Personal","Telefonico")
+
+heatmap2 <- t(heatmap2)
+heatmap(heatmap2,Rowv = NA, Colv = NA, revC = TRUE, margins = c(15,8))
+
+tablamapeo2 <- round(heatmap2/sum(heatmap2),4)
+tablamapeo2 <- cbind(tablamapeo2,c(sum(tablamapeo2[1,]),sum(tablamapeo2[2,]),sum(tablamapeo2[3,])))
+tablamapeo2 <- rbind(tablamapeo2,c(sum(tablamapeo2[,1]), sum(tablamapeo2[,2]), sum(tablamapeo2[,3]), sum(tablamapeo2[,4]), sum(tablamapeo2[,5])))
+rownames(tablamapeo2) <- c('Facturacion','Suministro','Prestaciones',"Total")
+colnames(tablamapeo2) <- c("Postal","Electronico","Personal","Telefonico","Total")
+round(tablamapeo2,2)
+```
+
+```{r}
+tablamapeo2
+heatmap(heatmap2,Rowv = NA, Colv = NA, revC = TRUE, margins = c(15,8))
+
+```
+
+
+\newpage
+
+## PARTE III: CONCLUSIONES
+
+A partir de la segmentacion de datos realizada anteriormente podemos afirmar que:
+
+* El 30% de los reclamos son improcedentes.
+* Los medios de reclamo mas utilizado son 1) Telefono y 2) Medio Electronico. Ambos medios de recepcion de reclamo alcanzan el 80% de todos los reclamos.
+* El motivo mas frecuente de reclamo es la Gestion de Prestaciones.
+* El comportamiento de los reclamos procedentes es muy similar al de los reclamos improcedentes, es decir ambos poseen una distribucion muy parecida en cuanto al tipo de reclamos y el medio de recepcion.
+
